@@ -123,7 +123,7 @@ class EventMethods
         $this->_token = $this->scopeConfigInterface->getValue('remarkety/mgconnector/api_key');
         $intervals = $this->scopeConfigInterface->getValue('remarkety/mgconnector/intervals');
         if (empty($intervals)) {
-            $this->_intervals = [1,3,10];
+            $this->_intervals = [1, 3, 10];
         } else {
             $this->_intervals = explode(',', $intervals);
         }
@@ -133,12 +133,12 @@ class EventMethods
 
         try {
             if ($this->_enableWebhooksTiming) {
-                $writer = new \Zend\Log\Writer\Stream(BP . '/var/log/remarkety_webhooks_timing.log');
-                $this->_webhooksTimingLogger = new \Zend\Log\Logger();
-                $this->_webhooksTimingLogger->addWriter($writer);
+                $handler = new \Monolog\Handler\StreamHandler(BP . '/var/log/remarkety_webhooks_timing.log');
+                $this->_webhooksTimingLogger = new \Monolog\Logger('remarkety_webhooks_timing');
+                $this->_webhooksTimingLogger->pushHandler($handler);
             }
         } catch (\Exception $ex) {
-            $this->logError($ex);
+            $this->logger->error($ex->getMessage(), ['exception' => $ex]);
         }
     }
 
@@ -178,7 +178,7 @@ class EventMethods
     protected function _getRequestConfig($eventType, $async = false)
     {
         $config = [
-            'adapter' => 'Zend_Http_Client_Adapter_Curl',
+            'adapter' => 'Laminas\Http\Client\Adapter\Curl',
             'timeout' => self::REMARKETY_TIMEOUT,
             'request_timeout' => self::REMARKETY_TIMEOUT,
             'curloptions' => [
@@ -230,13 +230,13 @@ class EventMethods
     public function makeRequest($eventType, $payload, $storeId = null, $attempt = 0, $queueId = null, $forceSync = false)
     {
         try {
-            $this->startTiming('makeRequest_'.$eventType);
+            $this->startTiming('makeRequest_' . $eventType);
             if (!$this->shouldSendEvent($eventType, $payload, $storeId)) {
                 //safety for not sending the same event on same event
                 $this->logger->debug('Event already sent ' . $eventType);
                 return true;
             }
-
+    
             $url = self::REMARKETY_EVENTS_ENDPOINT;
             if (!empty($storeId)) {
                 $remarketyId = $this->configHelper->getRemarketyPublicId($storeId);
@@ -246,19 +246,19 @@ class EventMethods
                 $url .= '?storeId=' . $remarketyId;
             }
             $payload = array_merge($payload, $this->_getPayloadBase($eventType));
-
+    
             if (empty($queueId)) {
                 $trace = debug_backtrace();
                 if (isset($trace[1])) {
                     $payload['calling_function'] = str_replace(
-                            'Remarkety\\Mgconnector\\',
-                            '',
-                            get_class($trace[1]['object'])
-                        ) . '::' . $trace[1]['function'];
+                        'Remarkety\\Mgconnector\\',
+                        '',
+                        get_class($trace[1]['object'])
+                    ) . '::' . $trace[1]['function'];
                     unset($trace);
                 }
             }
-
+    
             $sync = $forceSync || ($this->_forceSyncWebhooks && $this->_countEvents < 3);
             if (empty($queueId) && !$sync) {
                 //batch update, push to queue
@@ -266,33 +266,33 @@ class EventMethods
                 return true;
             }
             $this->_countEvents++;
-
+    
             $json = json_encode($payload);
-
+    
             $isAsync = !is_null($queueId);
-            $client = new \Zend_Http_Client($url, $this->_getRequestConfig($eventType, $isAsync));
-            $response = $client
-                ->setHeaders($this->_getHeaders($eventType, $payload, $storeId))
-                ->setRawData($json, 'application/json')
-                ->request(self::REMARKETY_METHOD);
-
-            switch ($response->getStatus()) {
+            $client = new \Laminas\Http\Client($url, $this->_getRequestConfig($eventType, $isAsync));
+            $client->setHeaders($this->_getHeaders($eventType, $payload, $storeId));
+            $client->setRawBody($json, 'application/json');
+            $client->setMethod(self::REMARKETY_METHOD);
+            $response = $client->send();
+    
+            switch ($response->getStatusCode()) {
                 case '200':
-                    $this->endTiming('makeRequest_'.$eventType);
+                    $this->endTiming('makeRequest_' . $eventType);
                     return true;
                 case '400':
                     throw new \Exception('Request has been malformed.');
                 case '401':
                     throw new \Exception('Request failed, probably wrong API key or inactive account.');
                 default:
-                    $err = $response->getStatus() . ' - ' . $response->getRawBody();
-                    $this->_queueRequest($eventType, $payload, $attempt+1, $queueId, $storeId, $err);
+                    $err = $response->getStatusCode() . ' - ' . $response->getBody();
+                    $this->_queueRequest($eventType, $payload, $attempt + 1, $queueId, $storeId, $err);
             }
         } catch (\Exception $e) {
             $err = $e->getCode() . ' - ' . $e->getMessage();
-            $this->_queueRequest($eventType, $payload, $attempt+1, $queueId, $storeId, $err);
+            $this->_queueRequest($eventType, $payload, $attempt + 1, $queueId, $storeId, $err);
         }
-        $this->endTiming('makeRequest_'.$eventType);
+        $this->endTiming('makeRequest_' . $eventType);
         return false;
     }
 
@@ -300,12 +300,12 @@ class EventMethods
     {
 
         $queueModel = null;
-        if ($attempt == 0 || !empty($this->_intervals[$attempt-1])) {
+        if ($attempt == 0 || !empty($this->_intervals[$attempt - 1])) {
             $now = time();
             if ($attempt == 0) {
                 $nextAttempt = $now;
             } else {
-                $nextAttempt = $now + (int)$this->_intervals[$attempt-1] * 60;
+                $nextAttempt = $now + (int) $this->_intervals[$attempt - 1] * 60;
             }
             if ($queueId) {
                 $queueModel = $this->_remarketyQueueRepo->getById($queueId);
@@ -320,14 +320,14 @@ class EventMethods
                 $queueModel = $this->queueFactory->create();
                 $this->_remarketyQueueRepo->save($queueModel);
                 $queueModel->setData([
-                                         'event_type' => $eventType,
-                                         'payload' => json_encode($payload),
-                                         'attempts' => $attempt,
-                                         'last_attempt' => date("Y-m-d H:i:s", $now),
-                                         'next_attempt' => date("Y-m-d H:i:s", $nextAttempt),
-                                         'status' => 1,
-                                         'store_id' => $storeId
-                                     ]);
+                    'event_type' => $eventType,
+                    'payload' => json_encode($payload),
+                    'attempts' => $attempt,
+                    'last_attempt' => date("Y-m-d H:i:s", $now),
+                    'next_attempt' => date("Y-m-d H:i:s", $nextAttempt),
+                    'status' => 1,
+                    'store_id' => $storeId
+                ]);
                 if (!empty($err)) {
                     $queueModel->setLastErrorMessage($err);
                 }
@@ -346,7 +346,7 @@ class EventMethods
     {
         date_default_timezone_set('UTC');
         $arr = [
-            'timestamp' => (string)time(),
+            'timestamp' => (string) time(),
             'event_id' => $eventType,
         ];
         return $arr;
@@ -386,7 +386,7 @@ class EventMethods
 
     public function logError(\Exception $exception)
     {
-        $this->logger->error("Remarkety:".self::class." - " . $exception->getMessage(), [
+        $this->logger->error("Remarkety:" . self::class . " - " . $exception->getMessage(), [
             'message' => $exception->getMessage(),
             'line' => $exception->getLine(),
             'file' => $exception->getFile(),
@@ -417,7 +417,7 @@ class EventMethods
         $ended = microtime(true);
         $started = $this->_timings[$eventName];
         unset($this->_timings[$eventName]);
-        $totalTime = ($ended - $started)*1000;
+        $totalTime = ($ended - $started) * 1000;
 
         $this->_webhooksTimingLogger->info(";" . $eventName . ";" . $totalTime);
     }
@@ -447,7 +447,7 @@ class EventMethods
         unset($data['price']);
         unset($data['salePrice']);
         if (isset($data['variants']) && is_array($data['variants'])) {
-            foreach ($data['variants'] as & $variant) {
+            foreach ($data['variants'] as &$variant) {
                 unset($variant['price']);
                 unset($variant['salePrice']);
             }

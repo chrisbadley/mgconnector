@@ -36,13 +36,13 @@ class Request
     protected function _getRequestConfig()
     {
         return [
-            'adapter' => 'Zend_Http_Client_Adapter_Curl',
+            'adapter' => 'Laminas\Http\Client\Adapter\Curl',
             'curloptions' => [
-//                CURLOPT_FOLLOWLOCATION => true,
+    //            CURLOPT_FOLLOWLOCATION => true,
                 CURLOPT_HEADER => true,
                 CURLOPT_CONNECTTIMEOUT => self::REMARKETY_TIMEOUT,
-//                CURLOPT_SSL_CIPHER_LIST => "RC4-SHA"
-//                CURLOPT_SSL_VERIFYPEER => false,
+    //            CURLOPT_SSL_CIPHER_LIST => "RC4-SHA"
+    //            CURLOPT_SSL_VERIFYPEER => false,
             ],
         ];
     }
@@ -69,30 +69,33 @@ class Request
     {
         try {
             $payload = array_merge($payload, $this->_getPayloadBase());
-
-            $client = new \Zend_Http_Client(
+    
+            $client = new \Laminas\Http\Client(
                 self::REMARKETY_URI,
-                $this->_getRequestConfig()
+                [
+                    'adapter' => 'Laminas\Http\Client\Adapter\Curl',
+                    'curloptions' => $this->_getRequestConfig()['curloptions']
+                ]
             );
-
+    
             $client->setParameterPost($payload);
-
+    
             $response = $client->request(self::REMARKETY_METHOD);
-
+    
             $body = (array)json_decode($response->getBody());
-            $this->session->setRemarketyLastResponseStatus($response->getStatus() === 200 ? 1 : 0);
+            $this->session->setRemarketyLastResponseStatus($response->getStatusCode() === 200 ? 1 : 0);
             $this->session->setRemarketyLastResponseMessage($this->serialize->serialize($body));
-
-
-            switch ($response->getStatus()) {
+    
+    
+            switch ($response->getStatusCode()) {
                 case '200':
                     return $body;
                 case '400':
                     throw new \Exception('Request failed. ' . $body['message']);
                 default:
-                    throw new \Exception('Request to remarkety servers failed ('.$response->getStatus().')');
+                    throw new \Exception('Request to remarkety servers failed ('.$response->getStatusCode().')');
             }
-
+    
         } catch (\Exception $e) {
             throw new \Exception($e->getMessage());
         }
