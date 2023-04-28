@@ -1,4 +1,4 @@
-# Remarkety connector for Magento 2
+# Remarkety connector for Magento 2.4.6
 
 ## Installation
 To install the connector using composer, run the following commands:
